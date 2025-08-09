@@ -1,118 +1,132 @@
 package com.example.techiedating.service;
 
 import com.example.techiedating.dto.MatchScoreDTO;
+import com.example.techiedating.exception.ProfileNotFoundException;
+import com.example.techiedating.model.User;
 import com.example.techiedating.model.UserProfile;
 import com.example.techiedating.model.UserSkill;
 import com.example.techiedating.repository.UserProfileRepository;
-import com.example.techiedating.repository.SkillRepository;
 import com.example.techiedating.repository.UserRepository;
 import com.example.techiedating.repository.UserSkillRepository;
+import com.example.techiedating.service.cache.MatchmakingCacheService;
+import com.example.techiedating.service.distance.DistanceCalculationService;
+import com.example.techiedating.service.scoring.MatchScoringService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.*;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Service for handling matchmaking operations between users.
+ * Delegates specific responsibilities to specialized services.
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class MatchmakingService {
 
-    // Weights for different match factors (adjust as needed)
-    private static final double SKILL_WEIGHT = 0.5;
-    private static final double DISTANCE_WEIGHT = 0.3;
-    private static final double EXPERIENCE_WEIGHT = 0.2;
-    
-    // Maximum distance in kilometers to consider for matching
-    private static final double MAX_DISTANCE_KM = 100.0;
-    
     private final UserProfileRepository userProfileRepository;
     private final UserSkillRepository userSkillRepository;
-    private final SkillRepository skillRepository;
-    private final PhotoService photoService;
     private final UserRepository userRepository;
+    private final MatchScoringService matchScoringService;
+    private final MatchmakingCacheService cacheService;
+    private final DistanceCalculationService distanceCalculationService;
+
     /**
      * Find potential matches for a user
-     * @param currentUserId The ID of the user to find matches for
+     * @param username The username of the user to find matches for
      * @param page Page number (0-based)
      * @param size Number of matches per page
      * @return List of potential matches with scores
      */
-    @Cacheable(value = "matches", key = "#currentUserId + '_' + #page + '_' + #size")
+    @Transactional(readOnly = true)
     public List<MatchScoreDTO> findPotentialMatches(String username, int page, int size) {
-        log.info("Calculating potential matches for user: {}, page: {}, size: {}", username, page, size);
-        String currentUserId = userRepository.findByUsername(username).get().getId();
-        // Get current user's profile
-        UserProfile currentUserUserProfile = userProfileRepository.findByUserId(currentUserId)
-                .orElseThrow(() -> new RuntimeException("Current user profile not found"));
+        log.info("Finding potential matches for user: {}, page: {}, size: {}", username, page, size);
 
-        // Get all other profiles (paginated)
-        Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
-        List<UserProfile> potentialMatches = userProfileRepository.findByUserIdNot(currentUserId, pageable).getContent();
+        // Validate pagination parameters
+        validatePagination(page, size);
+
+        // Check cache first
+        List<MatchScoreDTO> cachedResult = cacheService.getCachedMatches(username, page, size);
+        if (cachedResult != null) {
+            log.debug("Cache hit for matches: user={}, page={}, size={}", username, page, size);
+            return cachedResult;
+        }
+
+        // Get current user and profile with validation
+        User user = getUserByUsername(username);
+        UserProfile currentUserProfile = getUserProfile(user);
+        validateProfileCompleteness(currentUserProfile);
+
+        // Get paginated potential matches
+        List<UserProfile> potentialMatches = getPaginatedPotentialMatches(user.getId(), page, size);
+        if (potentialMatches.isEmpty()) {
+            return Collections.emptyList();
+        }
 
         // Get current user's skills for comparison
-        LinkedHashMap<Integer, Integer> currentUserSkills = userSkillRepository.findByUserId(currentUserId).stream()
-                .collect(Collectors.toMap(
-                        userSkill -> userSkill.getSkill().getId(),
-                        UserSkill::getLevel,
-                        (existing, replacement) -> existing,
-                        LinkedHashMap::new
-                ));
+        Map<Integer, Integer> currentUserSkills = getUserSkills(user.getId());
 
-        // Calculate match scores for each potential match
-        return potentialMatches.stream()
-                .map(profile -> calculateMatchScore(currentUserUserProfile, profile, currentUserSkills, null))
-                .sorted(Comparator.comparingDouble(MatchScoreDTO::getScore).reversed())
-                .collect(Collectors.toList());
+        // Calculate and return match scores
+        return calculateMatchScores(currentUserProfile, potentialMatches, currentUserSkills);
     }
-    
+
     /**
      * Calculate match score between two profiles
+     * @param currentUser The current user's profile
+     * @param otherUser The other user's profile to score
+     * @param currentUserSkills Map of skill IDs to levels for the current user
+     * @param skillNameCache Optional cache for skill names to reduce database lookups
+     * @return MatchScoreDTO containing match details
      */
-    @Cacheable(value = "matchScore", key = "#currentUser.user.id + '_' + #otherUser.user.id")
+    @Transactional(readOnly = true)
     public MatchScoreDTO calculateMatchScore(UserProfile currentUser, UserProfile otherUser,
-                                             LinkedHashMap<Integer, Integer> currentUserSkills,
-                                             Map<Long, String> skillNameCache) {
-        
-        // 1. Calculate skill compatibility (0.0 to 1.0)
+                                           Map<Integer, Integer> currentUserSkills,
+                                           Map<Long, String> skillNameCache) {
+        if (currentUser == null || otherUser == null) {
+            throw new IllegalArgumentException("Both user profiles must be provided");
+        }
+
+        // Check cache first
+        MatchScoreDTO cachedScore = cacheService.getCachedMatchScore(currentUser, otherUser);
+        if (cachedScore != null) {
+            return cachedScore;
+        }
+
+        // Get other user's skills
         List<UserSkill> otherUserSkills = userSkillRepository.findByUserId(otherUser.getUser().getId());
-        double skillScore = calculateSkillScore(currentUserSkills, otherUserSkills);
-        
-        // 2. Calculate distance score (0.0 to 1.0, with 1.0 being closest)
-        double distance = calculateDistance(
-                currentUser.getLatitude(), currentUser.getLongitude(),
-                otherUser.getLatitude(), otherUser.getLongitude()
+
+        // Delegate score calculation to MatchScoringService
+        double totalScore = matchScoringService.calculateMatchScore(
+                currentUser, 
+                otherUser, 
+                new LinkedHashMap<>(currentUserSkills), 
+                otherUserSkills
         );
-        double distanceScore = 1.0 - Math.min(distance / MAX_DISTANCE_KM, 1.0);
-        
-        // 3. Calculate experience score (0.0 to 1.0, with 1.0 being same experience)
-        double expScore = calculateExperienceScore(
-                currentUser.getExperienceYrs(),
-                otherUser.getExperienceYrs()
+
+        // Get common skills with names
+        List<String> commonSkills = getCommonSkills(
+                currentUserSkills, 
+                otherUserSkills,
+                skillNameCache != null ? skillNameCache : new HashMap<>()
         );
-        
-        // 4. Calculate weighted total score (0.0 to 1.0)
-        double totalScore = (skillScore * SKILL_WEIGHT) + 
-                          (distanceScore * DISTANCE_WEIGHT) + 
-                          (expScore * EXPERIENCE_WEIGHT);
-        
-        // 5. Get common skills
-        List<String> commonSkills = otherUserSkills.stream()
-                .filter(skill -> currentUserSkills.containsKey(skill.getSkill().getId()))
-                .map(skill -> skill.getSkill().getName())
-                .collect(Collectors.toList());
-        
-        // 6. Get primary photo URL if available
-        String photoUrl = photoService.getPrimaryPhotoUrl(otherUser.getUser().getId());
-        
+
+        // Calculate distance
+        double distance = distanceCalculationService.calculateDistance(
+                currentUser.getLatitude(), 
+                currentUser.getLongitude(),
+                otherUser.getLatitude(), 
+                otherUser.getLongitude()
+        );
+
+        // Build and return the result
         return MatchScoreDTO.builder()
                 .userId(otherUser.getUser().getId())
                 .displayName(otherUser.getDisplayName())
@@ -122,60 +136,80 @@ public class MatchmakingService {
                 .distanceKm(distance)
                 .score(totalScore)
                 .commonSkills(commonSkills)
-                .photoUrl(photoUrl)
                 .build();
     }
+
+    private void validatePagination(int page, int size) {
+        if (page < 0) {
+            throw new IllegalArgumentException("Page number must not be less than zero");
+        }
+        if (size < 1) {
+            throw new IllegalArgumentException("Page size must be at least 1");
+        }
+    }
     
-    /**
-     * Calculate skill compatibility score (0.0 to 1.0)
-     */
-    private double calculateSkillScore(
-            LinkedHashMap<Integer, Integer> currentUserSkills,
-            List<UserSkill> otherUserSkills) {
-        
-        if (currentUserSkills.isEmpty() || otherUserSkills.isEmpty()) {
-            return 0.0;
+    private User getUserByUsername(String username) {
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new ProfileNotFoundException("User not found with username: " + username));
+    }
+    
+    private UserProfile getUserProfile(User user) {
+        return userProfileRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new ProfileNotFoundException("Profile not found for user: " + user.getUsername()));
+    }
+    
+    private void validateProfileCompleteness(UserProfile profile) {
+        if (profile.getGender() == null) {
+            throw new ProfileNotFoundException("Please complete your profile by setting your gender");
         }
-        
-        // Calculate total possible skill points
-        double totalPossible = currentUserSkills.values().stream()
-                .mapToInt(level -> level * level) // Square to give more weight to higher levels
-                .sum();
-        
-        if (totalPossible == 0) {
-            return 0.0;
+        if (profile.getInterests() == null || profile.getInterests().isEmpty()) {
+            throw new ProfileNotFoundException("Please add some interests to your profile");
         }
-        
-        // Calculate matching skill points
-        double matchingPoints = otherUserSkills.stream()
-                .filter(skill -> currentUserSkills.containsKey(skill.getSkill().getId()))
-                .mapToInt(skill -> {
-                    int currentLevel = currentUserSkills.get(skill.getSkill().getId());
-                    return currentLevel * skill.getLevel(); // Multiply skill levels
-                })
-                .sum();
-        
-        // Normalize to 0.0-1.0 range
-        return Math.min(matchingPoints / totalPossible, 1.0);
+    }
+    
+    private List<UserProfile> getPaginatedPotentialMatches(String userId, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "user.id"));
+        return userProfileRepository.findByUserIdNot(userId, pageable).getContent();
+    }
+    
+    private Map<Integer, Integer> getUserSkills(String userId) {
+        return userSkillRepository.findByUserId(userId).stream()
+                .collect(Collectors.toMap(
+                        userSkill -> userSkill.getSkill().getId(),
+                        UserSkill::getLevel,
+                        (existing, replacement) -> existing,
+                        LinkedHashMap::new
+                ));
+    }
+    
+    private List<MatchScoreDTO> calculateMatchScores(UserProfile currentUser, 
+                                                   List<UserProfile> potentialMatches,
+                                                   Map<Integer, Integer> currentUserSkills) {
+        return potentialMatches.stream()
+                .map(profile -> calculateMatchScore(currentUser, profile, currentUserSkills, null))
+                .sorted(Comparator.comparingDouble(MatchScoreDTO::getScore).reversed())
+                .collect(Collectors.toList());
     }
     
     /**
-     * Calculate distance between two points in kilometers using Haversine formula
+     * Extract common skill names between current user and another user
+     * @param currentUserSkills Map of skill IDs to levels for current user
+     * @param otherUserSkills List of skills for the other user
+     * @param skillNameCache Cache for skill names to reduce DB lookups
+     * @return List of common skill names
      */
-    private double calculateDistance(Double lat1, Double lon1, Double lat2, Double lon2) {
-        if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) {
-            return Double.MAX_VALUE; // Return max distance if location is not set
-        }
+    private List<String> getCommonSkills(
+            Map<Integer, Integer> currentUserSkills,
+            List<UserSkill> otherUserSkills,
+            Map<Long, String> skillNameCache) {
         
-        final int R = 6371; // Radius of the earth in km
-        
-        double latDistance = Math.toRadians(lat2 - lat1);
-        double lonDistance = Math.toRadians(lon2 - lon1);
-        double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c; // Distance in km
+        return otherUserSkills.stream()
+                .filter(skill -> currentUserSkills.containsKey(skill.getSkill().getId()))
+                .map(skill -> skillNameCache.computeIfAbsent(
+                        Long.valueOf(skill.getSkill().getId()),
+                        k -> skill.getSkill().getName()
+                ))
+                .collect(Collectors.toList());
     }
     
     /**
@@ -196,19 +230,5 @@ public class MatchmakingService {
     @CacheEvict(value = {"matches", "matchScore"}, allEntries = true)
     public void clearAllMatchCaches() {
         log.info("Scheduled cache eviction for all match caches");
-    }
-    
-    /**
-     * Calculate experience compatibility score (0.0 to 1.0)
-     */
-    private double calculateExperienceScore(Integer exp1, Integer exp2) {
-        if (exp1 == null || exp2 == null) {
-            return 0.5; // Neutral score if experience is not set for either user
-        }
-        
-        // Normalize experience difference to 0.0-1.0 range
-        // The closer the experience, the higher the score
-        double diff = Math.abs(exp1 - exp2);
-        return Math.max(0, 1.0 - (diff / 20.0)); // Full score if same experience, decreases with difference
     }
 }

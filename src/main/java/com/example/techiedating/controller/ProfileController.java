@@ -1,10 +1,13 @@
 package com.example.techiedating.controller;
 
 import com.example.techiedating.dto.ProfileResponse;
+import com.example.techiedating.dto.UpdateProfileRequest;
+import com.example.techiedating.exception.ProfileNotFoundException;
 import com.example.techiedating.model.User;
 import com.example.techiedating.model.UserProfile;
 import com.example.techiedating.repository.UserProfileRepository;
 import com.example.techiedating.repository.UserRepository;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +16,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 
@@ -25,54 +29,54 @@ public class ProfileController {
     private final UserRepository userRepository;
 
     @GetMapping("/me")
-    public ResponseEntity<?> getMyProfile(
+    public ResponseEntity<ProfileResponse> getMyProfile(
             @AuthenticationPrincipal UserDetails userDetails) {
         
         String username = userDetails.getUsername();
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
                 
-        Optional<UserProfile> profileOpt = userProfileRepository.findByUserId(user.getId());
+        UserProfile profile = userProfileRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new ProfileNotFoundException("Profile not found for user: " + user.getUsername()));
         
-        if (profileOpt.isEmpty()) {
-            Map<String, Object> response = new HashMap<>();
-            response.put("status", "PROFILE_NOT_FOUND");
-            response.put("message", "Profile not found. Please create your profile.");
-            response.put("userId", user.getId());
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
-        }
-        
-        return ResponseEntity.ok(convertToProfileResponse(profileOpt.get()));
+        return ResponseEntity.ok(convertToProfileResponse(profile));
     }
 
     @PutMapping("/me")
     public ResponseEntity<ProfileResponse> updateProfile(
             @AuthenticationPrincipal UserDetails userDetails,
-            @RequestBody ProfileResponse profileUpdate) {
-            
+            @Valid @RequestBody UpdateProfileRequest updateRequest) {
+        
         String username = userDetails.getUsername();
         User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new ProfileNotFoundException("User not found with username: " + username));
                 
         UserProfile profile = userProfileRepository.findByUserId(user.getId())
-                .orElse(new UserProfile());
+                .orElseGet(() -> {
+                    // Create new profile if it doesn't exist
+                    UserProfile newProfile = new UserProfile();
+                    newProfile.setUser(user);
+                    newProfile.setId(user.getId()); // Ensure ID matches user ID
+                    return newProfile;
+                });
                 
-        // Update profile fields from DTO
-        profile.setUser(user);
-        profile.setDisplayName(profileUpdate.getDisplayName());
-        profile.setBio(profileUpdate.getBio());
-        profile.setGender(profileUpdate.getGender());
-        profile.setDateOfBirth(profileUpdate.getDateOfBirth());
-        profile.setLatitude(profileUpdate.getLatitude());
-        profile.setLongitude(profileUpdate.getLongitude());
-        profile.setExperienceYrs(profileUpdate.getExperienceYrs());
+        // Update profile fields from request
+        profile.setDisplayName(updateRequest.getDisplayName());
+        profile.setBio(updateRequest.getBio());
+        profile.setGender(updateRequest.getGender());
+        profile.setDateOfBirth(updateRequest.getDateOfBirth());
+        profile.setLatitude(updateRequest.getLatitude());
+        profile.setLongitude(updateRequest.getLongitude());
+        profile.setExperienceYrs(updateRequest.getExperienceYrs());
         
-        if (profileUpdate.getInterests() != null) {
-            profile.setInterests(profileUpdate.getInterests());
+        if (updateRequest.getInterests() != null) {
+            profile.setInterests(new HashSet<>(updateRequest.getInterests()));
         }
         
-        // Set user relationship
-        profile.setUser(user);
+        // Ensure the profile is linked to the user
+        if (profile.getUser() == null) {
+            profile.setUser(user);
+        }
         
         UserProfile savedProfile = userProfileRepository.save(profile);
         return ResponseEntity.ok(convertToProfileResponse(savedProfile));

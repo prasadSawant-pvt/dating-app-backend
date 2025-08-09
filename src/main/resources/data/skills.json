@@ -1,0 +1,94 @@
+{
+  "skills": [
+    {
+      "name": "Java",
+      "category": "PROGRAMMING_LANGUAGES",
+      "description": "Object-oriented programming language"
+    },
+    {
+      "name": "Python",
+      "category": "PROGRAMMING_LANGUAGES",
+      "description": "High-level programming language"
+    },
+    {
+      "name": "JavaScript",
+      "category": "PROGRAMMING_LANGUAGES",
+      "description": "Scripting language for web development"
+    },
+    {
+      "name": "Spring Boot",
+      "category": "WEB_DEVELOPMENT",
+      "description": "Java framework for building web applications"
+    },
+    {
+      "name": "React",
+      "category": "WEB_DEVELOPMENT",
+      "description": "JavaScript library for building user interfaces"
+    },
+    {
+      "name": "Docker",
+      "category": "DEVOPS",
+      "description": "Containerization platform"
+    },
+    {
+      "name": "Kubernetes",
+      "category": "DEVOPS",
+      "description": "Container orchestration system"
+    },
+    {
+      "name": "SQL",
+      "category": "DATABASES",
+      "description": "Structured Query Language"
+    },
+    {
+      "name": "MongoDB",
+      "category": "DATABASES",
+      "description": "NoSQL database program"
+    },
+    {
+      "name": "Machine Learning",
+      "category": "DATA_SCIENCE",
+      "description": "Field of artificial intelligence"
+    },
+    {
+      "name": "Project Management",
+      "category": "PROJECT_MANAGEMENT",
+      "description": "Leading a team to achieve project goals"
+    },
+    {
+      "name": "Agile Methodology",
+      "category": "PROJECT_MANAGEMENT",
+      "description": "Iterative approach to project management"
+    },
+    {
+      "name": "UI/UX Design",
+      "category": "UI_UX_DESIGN",
+      "description": "Designing user interfaces and experiences"
+    },
+    {
+      "name": "Leadership",
+      "category": "LEADERSHIP",
+      "description": "Ability to guide and influence others"
+    },
+    {
+      "name": "Teamwork",
+      "category": "TEAMWORK",
+      "description": "Collaborating effectively with others"
+    },
+    {
+      "name": "Problem Solving",
+      "category": "PROBLEM_SOLVING",
+      "description": "Identifying solutions to complex issues"
+    },
+    {
+      "name": "English",
+      "category": "LANGUAGES",
+      "description": "Proficiency in English language"
+    },
+    {
+      "name": "Spanish",
+      "category": "LANGUAGES",
+      "description": "Proficiency in Spanish language"
+    }
+  ]
+}
