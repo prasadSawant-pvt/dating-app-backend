@@ -8,6 +8,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Repository
@@ -17,6 +18,22 @@ public interface UserSkillRepository extends JpaRepository<UserSkill, Long> {
      * Find all skills for a specific user
      */
     List<UserSkill> findByUserId(String userId);
+    
+    /**
+     * Find a user's skill by user ID and skill ID
+     */
+    @Query("SELECT us FROM UserSkill us WHERE us.user.id = :userId AND us.skill.id = :skillId")
+    Optional<UserSkill> findByUserIdAndSkillId(
+            @Param("userId") String userId,
+            @Param("skillId") Integer skillId);
+    
+    /**
+     * Find a user's skill by ID and user ID
+     */
+    @Query("SELECT us FROM UserSkill us WHERE us.id = :id AND us.user.id = :userId")
+    Optional<UserSkill> findByIdAndUserId(
+            @Param("id") Long id,
+            @Param("userId") String userId);
     
     /**
      * Find skills for multiple users
