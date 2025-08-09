@@ -1,5 +1,6 @@
 package com.example.techiedating.model;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.GenericGenerator;
@@ -50,6 +51,7 @@ public class User implements UserDetails {
     private Instant createdAt = Instant.now();
 
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @JsonManagedReference
     private UserProfile userProfile;
 
     @PrePersist

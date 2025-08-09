@@ -5,6 +5,7 @@ import com.example.techiedating.model.UserProfile;
 import com.example.techiedating.model.UserSkill;
 import com.example.techiedating.repository.UserProfileRepository;
 import com.example.techiedating.repository.SkillRepository;
+import com.example.techiedating.repository.UserRepository;
 import com.example.techiedating.repository.UserSkillRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +38,7 @@ public class MatchmakingService {
     private final UserSkillRepository userSkillRepository;
     private final SkillRepository skillRepository;
     private final PhotoService photoService;
-
+    private final UserRepository userRepository;
     /**
      * Find potential matches for a user
      * @param currentUserId The ID of the user to find matches for
@@ -46,9 +47,9 @@ public class MatchmakingService {
      * @return List of potential matches with scores
      */
     @Cacheable(value = "matches", key = "#currentUserId + '_' + #page + '_' + #size")
-    public List<MatchScoreDTO> findPotentialMatches(String currentUserId, int page, int size) {
-        log.info("Calculating potential matches for user: {}, page: {}, size: {}", currentUserId, page, size);
-        
+    public List<MatchScoreDTO> findPotentialMatches(String username, int page, int size) {
+        log.info("Calculating potential matches for user: {}, page: {}, size: {}", username, page, size);
+        String currentUserId = userRepository.findByUsername(username).get().getId();
         // Get current user's profile
         UserProfile currentUserUserProfile = userProfileRepository.findByUserId(currentUserId)
                 .orElseThrow(() -> new RuntimeException("Current user profile not found"));

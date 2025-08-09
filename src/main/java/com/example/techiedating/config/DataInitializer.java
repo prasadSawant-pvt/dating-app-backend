@@ -1,6 +1,7 @@
 package com.example.techiedating.config;
 
 import com.example.techiedating.model.*;
+import com.example.techiedating.repository.PhotoRepository;
 import com.example.techiedating.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
@@ -21,11 +22,15 @@ public class DataInitializer {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final PhotoRepository photoRepository;
 
     @Bean
     @Transactional
     public CommandLineRunner initDatabase() {
         return args -> {
+            // First delete all photos to avoid foreign key constraint violations
+            photoRepository.deleteAll();
+            // Then delete all users
             userRepository.deleteAll();
 
             createUserWithProfile("alice@example.com", "Alice", "Smith", passwordEncoder.encode("password123"),
@@ -54,7 +59,9 @@ public class DataInitializer {
         // Save user first to get the ID
         user = userRepository.save(user);
 
+        // Create profile with the same ID as the user
         UserProfile profile = UserProfile.builder()
+                .id(user.getId())  // Set the ID to match the user's ID
                 .displayName(displayName)
                 .bio(bio)
                 .dateOfBirth(dateOfBirth)

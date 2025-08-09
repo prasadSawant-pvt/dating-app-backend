@@ -25,16 +25,16 @@ public class CloudinaryService {
     private final UserRepository userRepository;
 
     @Transactional
-    public Photo uploadProfilePhoto(MultipartFile file, String userId) throws IOException {
+    public Photo uploadProfilePhoto(MultipartFile file, String username) throws IOException {
         // Find the user
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found with id: " + userId));
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("User not found with username: " + username));
                 
         // Upload file to Cloudinary
         Map<?, ?> uploadResult = cloudinary.uploader().upload(
                 file.getBytes(),
                 ObjectUtils.asMap(
-                        "folder", "dating-app/users/" + userId,
+                        "folder", "dating-app/users/" + user.getId(),
                         "public_id", UUID.randomUUID().toString()
                 )
         );
@@ -55,9 +55,9 @@ public class CloudinaryService {
     }
 
     @Transactional
-    public void deletePhoto(String photoId, String userId) throws IOException {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found with id: " + userId));
+    public void deletePhoto(String photoId, String userName) throws IOException {
+        User user = userRepository.findByUsername(userName)
+                .orElseThrow(() -> new IllegalArgumentException("User not found with username: " + userName));
                 
         Photo photo = photoRepository.findByIdAndUser(photoId, user)
                 .orElseThrow(() -> new IllegalArgumentException("Photo not found or access denied"));
@@ -84,9 +84,9 @@ public class CloudinaryService {
     }
 
     @Transactional
-    public Photo setPrimaryPhoto(String photoId, String userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found with id: " + userId));
+    public Photo setPrimaryPhoto(String photoId, String userName) {
+        User user = userRepository.findByUsername(userName)
+                .orElseThrow(() -> new IllegalArgumentException("User not found with username: " + userName));
                 
         Photo newPrimary = photoRepository.findByIdAndUser(photoId, user)
                 .orElseThrow(() -> new IllegalArgumentException("Photo not found or access denied"));
@@ -112,9 +112,11 @@ public class CloudinaryService {
      * @return List of photos
      */
     @Transactional(readOnly = true)
-    public List<Photo> getUserPhotos(String userId) {
-        User user = new User();
-        user.setId(userId);
+    public List<Photo> getUserPhotos(String userName) {
+        User user = userRepository.findByUsername(userName)
+                .orElseThrow(() -> new IllegalArgumentException("User not found with username: " + userName));
+//        User user = new User();
+//        user.setId(userId);
         return photoRepository.findByUser(user);
     }
 

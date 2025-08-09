@@ -43,7 +43,7 @@ public class UserProfileRepositoryCustomImpl extends SimpleJpaRepository<UserPro
         List<Predicate> predicates = new ArrayList<>();
         
         // Exclude current user
-        predicates.add(cb.notEqual(profile.get("userId"), currentUserId));
+        predicates.add(cb.notEqual(profile.get("id"), currentUserId));
         
         // Add search query predicate (search in displayName and bio)
         if (query != null && !query.isEmpty()) {
@@ -83,18 +83,50 @@ public class UserProfileRepositoryCustomImpl extends SimpleJpaRepository<UserPro
         // Get the result list
         List<UserProfile> resultList = typedQuery.getResultList();
         
-        // Create a count query for pagination
-        var countQuery = cb.createQuery(Long.class);
-        var profileCount = countQuery.from(UserProfile.class);
-        countQuery.select(cb.count(profileCount));
+        // Create a separate count query with its own criteria builder and predicates
+        var countCb = entityManager.getCriteriaBuilder();
+        var countCq = countCb.createQuery(Long.class);
+        var countProfile = countCq.from(UserProfile.class);
+        countCq.select(countCb.count(countProfile));
         
-        // Apply the same predicates to the count query
-        if (!predicates.isEmpty()) {
-            countQuery.where(predicates.toArray(new Predicate[0]));
+        // Rebuild predicates for the count query to avoid path registration conflicts
+        List<Predicate> countPredicates = new ArrayList<>();
+        
+        // Exclude current user
+        countPredicates.add(countCb.notEqual(countProfile.get("id"), currentUserId));
+        
+        // Add search query predicate (search in displayName and bio)
+        if (query != null && !query.isEmpty()) {
+            String searchPattern = "%" + query.toLowerCase() + "%";
+            countPredicates.add(
+                countCb.or(
+                    countCb.like(countCb.lower(countProfile.get("displayName")), searchPattern),
+                    countCb.like(countCb.lower(countProfile.get("bio")), searchPattern)
+                )
+            );
+        }
+        
+        // Add gender filter
+        if (gender != null && !gender.isEmpty()) {
+            countPredicates.add(countCb.equal(countProfile.get("gender"), gender));
+        }
+        
+        // Add experience range filter
+        if (minExperience != null) {
+            countPredicates.add(countCb.greaterThanOrEqualTo(countProfile.get("experienceYrs"), minExperience));
+        }
+        
+        if (maxExperience != null) {
+            countPredicates.add(countCb.lessThanOrEqualTo(countProfile.get("experienceYrs"), maxExperience));
+        }
+        
+        // Apply all predicates to count query
+        if (!countPredicates.isEmpty()) {
+            countCq.where(countPredicates.toArray(new Predicate[0]));
         }
         
         // Get the total count
-        Long total = entityManager.createQuery(countQuery).getSingleResult();
+        Long total = entityManager.createQuery(countCq).getSingleResult();
         
         return new PageImpl<>(resultList, pageable, total);
     }

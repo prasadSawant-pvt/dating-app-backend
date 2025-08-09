@@ -1,11 +1,17 @@
 package com.example.techiedating.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CachingConfigurerSupport;
 import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.cache.support.NoOpCacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -18,9 +24,11 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 @Configuration
 @EnableCaching
+@ConditionalOnProperty(name = "spring.redis.enabled", havingValue = "true")
 public class RedisConfig extends CachingConfigurerSupport {
 
     @Value("${spring.redis.host:localhost}")
@@ -32,39 +40,65 @@ public class RedisConfig extends CachingConfigurerSupport {
     @Value("${spring.redis.password:}")
     private String redisPassword;
 
+    private static final Logger logger = LoggerFactory.getLogger(RedisConfig.class);
+
     @Bean
+    @Primary
     public RedisConnectionFactory redisConnectionFactory() {
-        RedisStandaloneConfiguration config = new RedisStandaloneConfiguration(redisHost, redisPort);
-        if (redisPassword != null && !redisPassword.isEmpty()) {
-            config.setPassword(redisPassword);
+        try {
+            RedisStandaloneConfiguration config = new RedisStandaloneConfiguration(redisHost, redisPort);
+            if (redisPassword != null && !redisPassword.isEmpty()) {
+                config.setPassword(redisPassword);
+            }
+            LettuceConnectionFactory factory = new LettuceConnectionFactory(config);
+            factory.afterPropertiesSet(); // Test the connection
+            return factory;
+        } catch (Exception e) {
+            logger.warn("Failed to connect to Redis: {}. Falling back to NoOp cache manager.", e.getMessage());
+            return null; // Will trigger fallback to NoOpCacheManager
         }
-        return new LettuceConnectionFactory(config);
     }
 
     @Bean
+    @Primary
     public CacheManager cacheManager(RedisConnectionFactory redisConnectionFactory) {
-        // Default cache configuration (1 hour TTL)
-        RedisCacheConfiguration defaultCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
-                .entryTtl(Duration.ofHours(1))
-                .disableCachingNullValues()
-                .serializeKeysWith(RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer()))
-                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(new GenericJackson2JsonRedisSerializer()));
+        if (redisConnectionFactory == null) {
+            logger.warn("Redis is not available. Using NoOpCacheManager as fallback.");
+            return new NoOpCacheManager();
+        }
 
-        // Specific cache configurations
-        Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
-        
-        // User profiles cache (longer TTL as they don't change often)
-        cacheConfigurations.put("profiles", defaultCacheConfig.entryTtl(Duration.ofHours(24)));
-        
-        // Match results cache (shorter TTL as they might change more frequently)
-        cacheConfigurations.put("matches", defaultCacheConfig.entryTtl(Duration.ofMinutes(30)));
-        
-        // Search results cache (short TTL for fresh results)
-        cacheConfigurations.put("search", defaultCacheConfig.entryTtl(Duration.ofMinutes(15)));
+        try {
+            // Default cache configuration (1 hour TTL)
+            RedisCacheConfiguration defaultCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
+                    .entryTtl(Duration.ofHours(1))
+                    .disableCachingNullValues()
+                    .serializeKeysWith(RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer()))
+                    .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(new GenericJackson2JsonRedisSerializer()));
 
-        return RedisCacheManager.builder(redisConnectionFactory)
-                .cacheDefaults(defaultCacheConfig)
-                .withInitialCacheConfigurations(cacheConfigurations)
-                .build();
+            // Specific cache configurations
+            Map<String, RedisCacheConfiguration> cacheConfigurations = new HashMap<>();
+            
+            // User profiles cache (longer TTL as they don't change often)
+            cacheConfigurations.put("profiles", defaultCacheConfig.entryTtl(Duration.ofHours(24)));
+            
+            // Match results cache (shorter TTL as they might change more frequently)
+            cacheConfigurations.put("matches", defaultCacheConfig.entryTtl(Duration.ofMinutes(30)));
+            
+            // Search results cache (short TTL for fresh results)
+            cacheConfigurations.put("search", defaultCacheConfig.entryTtl(Duration.ofMinutes(15)));
+
+            return RedisCacheManager.builder(redisConnectionFactory)
+                    .cacheDefaults(defaultCacheConfig)
+                    .withInitialCacheConfigurations(cacheConfigurations)
+                    .build();
+        } catch (Exception e) {
+            logger.warn("Failed to initialize Redis cache manager: {}. Falling back to NoOp cache manager.", e.getMessage());
+            return new NoOpCacheManager();
+        }
+    }
+    
+    @Bean
+    public CacheManager noOpCacheManager() {
+        return new NoOpCacheManager();
     }
 }

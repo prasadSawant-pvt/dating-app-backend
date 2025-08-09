@@ -24,8 +24,8 @@ public class SearchController {
             @AuthenticationPrincipal UserDetails userDetails,
             @Valid @RequestBody SearchRequestDTO request) {
         
-        String currentUserId = userDetails.getUsername();
-        SearchResultDTO<MatchScoreDTO> result = searchService.searchProfiles(request, currentUserId);
+        String username = userDetails.getUsername();
+        SearchResultDTO<MatchScoreDTO> result = searchService.searchProfiles(request, username);
         return ResponseEntity.ok(result);
     }
 

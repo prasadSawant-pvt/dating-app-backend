@@ -3,9 +3,11 @@ package com.example.techiedating.service;
 import com.example.techiedating.dto.MatchScoreDTO;
 import com.example.techiedating.dto.SearchRequestDTO;
 import com.example.techiedating.dto.SearchResultDTO;
+import com.example.techiedating.model.User;
 import com.example.techiedating.model.UserProfile;
 import com.example.techiedating.model.UserSkill;
 import com.example.techiedating.repository.UserProfileRepository;
+import com.example.techiedating.repository.UserRepository;
 import com.example.techiedating.repository.UserSkillRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -27,17 +30,20 @@ public class SearchService {
     private final UserProfileRepository userProfileRepository;
     private final UserSkillRepository userSkillRepository;
     private final MatchmakingService matchmakingService;
+    private final UserRepository userRepository;
 
     /**
      * Search for profiles based on the provided criteria
      */
-    public SearchResultDTO<MatchScoreDTO> searchProfiles(SearchRequestDTO request, String currentUserId) {
+    public SearchResultDTO<MatchScoreDTO> searchProfiles(SearchRequestDTO request, String userName) {
+
+        Optional<User> user = userRepository.findByUsername(userName);
         // Build pageable with sorting
         Pageable pageable = createPageable(request);
         
         // Get all profiles that match the basic criteria (excluding current user)
         Page<UserProfile> profiles = userProfileRepository.searchProfiles(
-                currentUserId,
+                user.get().getId(),
                 request.getQuery() != null ? request.getQuery().trim() : null,
                 request.getGender(),
                 request.getMinExperience(),
@@ -49,7 +55,7 @@ public class SearchService {
         List<MatchScoreDTO> results = profiles.getContent().stream()
                 .map(profile -> {
                     // Get user skills for skill-based filtering
-                    LinkedHashMap<Integer, Integer> profileSkills = userSkillRepository.findByUserId(profile.getUser().getId()).stream()
+                    LinkedHashMap<Integer, Integer> profileSkills = userSkillRepository.findByUserId(profile.getId()).stream()
                             .collect(Collectors.toMap(
                                     userSkill -> userSkill.getSkill().getId(),
                                     UserSkill::getLevel,
@@ -58,7 +64,7 @@ public class SearchService {
                             ));
                     
                     // Get current user's skills for score calculation
-                    LinkedHashMap<Integer, Integer> currentUserSkills = userSkillRepository.findByUserId(currentUserId).stream()
+                    LinkedHashMap<Integer, Integer> currentUserSkills = userSkillRepository.findByUserId(user.get().getId()).stream()
                             .collect(Collectors.toMap(
                                     userSkill -> userSkill.getSkill().getId(),
                                     UserSkill::getLevel,
@@ -68,7 +74,7 @@ public class SearchService {
                     
                     // Calculate match score
                     return matchmakingService.calculateMatchScore(
-                            userProfileRepository.findByUserId(currentUserId)
+                            userProfileRepository.findByUserId(user.get().getId())
                                     .orElseThrow(() -> new IllegalArgumentException("Current user profile not found")),
                             profile,
                             currentUserSkills,
